@@ -5,3 +5,7 @@ youtube-transcript-api
 python-dotenv
 faiss-cpu
 tiktoken
+uvicorn
+fastapi
+pydantic
+streamlit
