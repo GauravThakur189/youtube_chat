@@ -75,22 +75,64 @@ def process_video(data: VideoInput):
 
     return {"message": "Transcript processed and vector store saved.", "video_id": video_id}
 
+# @app.post("/ask")
+# def ask_question(data: QuestionInput):
+#     print("Received question for video:", data.video_id)
+#     store_path = os.path.join(VECTOR_DB_PATH, data.video_id)
+#     if not os.path.exists(store_path):
+#         raise HTTPException(status_code=404, detail="Vector store not found for this video")
+
+#     vector_store = FAISS.load_local(store_path, embeddings=embedding_model)
+#     retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 4})
+
+#     parallel_chain = RunnableParallel({
+#         'context': retriever | RunnableLambda(format_docs),
+#         'question': RunnablePassthrough()
+#     })
+
+#     main_chain = parallel_chain | prompt | llm | StrOutputParser()
+#     answer = main_chain.invoke(data.question)
+
+#     return {"answer": answer, "video_id": data.video_id, "question": data.question}
+
+
+
 @app.post("/ask")
 def ask_question(data: QuestionInput):
-    print("Received question for video:", data.video_id)
-    store_path = os.path.join(VECTOR_DB_PATH, data.video_id)
-    if not os.path.exists(store_path):
-        raise HTTPException(status_code=404, detail="Vector store not found for this video")
+    video_id = data.video_id
+    question = data.question
 
-    vector_store = FAISS.load_local(store_path, embeddings=embedding_model)
+    store_path = f"./vectorstores/{video_id}"
+    embedding_model = OpenAIEmbeddings(model="text-embedding-3-small")
+
+    # ✅ Add the flag below
+    vector_store = FAISS.load_local(
+        store_path,
+        embeddings=embedding_model,
+        allow_dangerous_deserialization=True
+    )
+
     retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 4})
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2)
 
-    parallel_chain = RunnableParallel({
-        'context': retriever | RunnableLambda(format_docs),
-        'question': RunnablePassthrough()
-    })
+    prompt = PromptTemplate(
+        template="""
+        You are a helpful assistant.
+        Answer ONLY from the provided transcript context.
+        If the context is insufficient, just say you don't know.
+        {context}
+        Question: {question}
+        """,
+        input_variables=["context", "question"]
+    )
 
-    main_chain = parallel_chain | prompt | llm | StrOutputParser()
-    answer = main_chain.invoke(data.question)
+    def format_docs(docs):
+        return "\n\n".join(doc.page_content for doc in docs)
 
-    return {"answer": answer, "video_id": data.video_id, "question": data.question}
+    chain = RunnableParallel({
+        "context": retriever | RunnableLambda(format_docs),
+        "question": RunnablePassthrough()
+    }) | prompt | llm | StrOutputParser()
+
+    result = chain.invoke(question)
+    return {"answer": result}
